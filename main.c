@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 #include <libgen.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/param.h>
 
 typedef struct s_vector
 {
@@ -18,16 +20,20 @@ typedef struct s_vector
     size_t capacity;
 } s_vector;
 
-void add_string(s_vector* lines, char* buffer);
+void add_string(s_vector* lines, char* buffer, bool copy);
 void buf_add_string(s_vector* lines, char* buffer, ssize_t nread);
+void erase(s_vector* vec, int pos);
 void add_path(s_vector*, char* path_name);
 void free_s_vector(s_vector* vector);
 void execute_bin(char** args);
 int num_args(char** args);
 int file_status(char* path_name);
-void update_cwd();
+int count_digits(int n);
 
 void cd(s_vector* args);
+void prevd(s_vector* args);
+void nextd(s_vector* args);
+void dirh(s_vector* args);
 
 void parse_input(s_vector* args, char* input_buffer);
 void handle_command_args(s_vector* args);
@@ -42,7 +48,12 @@ s_vector lines = {NULL, 0, 0};
 s_vector dir_history = {NULL, 0, 0};
 size_t current_dir = 0;
 
-char current_working_directory[PATH_MAX];
+void clean_up_mem()
+{
+    free_s_vector(&paths);
+    free_s_vector(&lines);
+    free_s_vector(&dir_history);
+}
 
 
 int main(int argc, char* argv[])
@@ -55,7 +66,8 @@ int main(int argc, char* argv[])
 
 // Add string to dynamic array of strings
 // Capacity doubles when full and attempting to add string
-void add_string(s_vector* lines, char* buffer)
+// If copy is true, the original buffer is copied. If copy is false, the pointer is copied
+void add_string(s_vector* lines, char* buffer, bool copy)
 {
     if (buffer && !*buffer) { return; }
 
@@ -72,7 +84,11 @@ void add_string(s_vector* lines, char* buffer)
         lines->data = temp;
     }
 
-    lines->data[lines->size] = buffer ? strdup(buffer) : NULL;
+    if (copy)
+        lines->data[lines->size] = buffer ? strdup(buffer) : NULL;
+    else
+        lines->data[lines->size] = buffer;
+
     lines->size++;
 }
 
@@ -96,6 +112,19 @@ void buf_add_string(s_vector* lines, char* buffer, ssize_t nread)
 
     lines->data[lines->size] = buffer ? strndup(buffer, nread) : NULL;
     lines->size++;
+}
+
+void erase(s_vector* vec, int pos)
+{
+    if (pos < 0 || pos >= (int)vec->size) { fprintf(stderr, "erase: invalid range\n"); exit(EXIT_FAILURE); }
+
+    for (int i = pos; i < (int)vec->size; i++)
+    {
+        free(vec->data[i]);
+        vec->data[i] = NULL;
+    }
+
+    vec->size = pos;
 }
 
 // Adds path path_name to PATH. Cleans path_name for absolute syntax, resolving symlinks, checking if the path_name is valid, and checking if the path_name already exists in PATH.
@@ -126,7 +155,7 @@ void add_path(s_vector* paths, char* path_name)
 
                 if (!already_has_path)
                 {
-                    add_string(paths, abs_path);
+                    add_string(paths, abs_path, false);
                 }
                 else
                 {
@@ -142,8 +171,6 @@ void add_path(s_vector* paths, char* path_name)
     {
         printf("%s: invalid path\n", path_name);
     }
-
-    free(abs_path);
 }
 
 // Determine number of arguments by finding null argument
@@ -300,15 +327,6 @@ void execute_bin(char** args)
     free(path);
 }
 
-void update_cwd()
-{
-    if (getcwd(current_working_directory, sizeof(current_working_directory)) == NULL)
-    {
-        perror("getcwd");
-        exit(EXIT_FAILURE);
-    }
-}
-
 // change directory built-in. If only 1 argument (i.e 'cd'), go to home
 // If 2 arguments, change directory of process to relative or absolute path specified by 2nd arg
 void cd(s_vector* args)
@@ -341,14 +359,24 @@ void cd(s_vector* args)
                             exit(EXIT_FAILURE);
                         }
 
-                        update_cwd();
-
                         // Add dir path to dir_history
-                        // TODO:
-                        if (dir_history.data[current_dir] && !strcmp(dir_history.data[current_dir], clean_path))
+                        if (strcmp(dir_history.data[current_dir], clean_path))
                         {
-                            add_string(&dir_history, clean_path);
-                            current_dir++;
+                            if (dir_history.size == current_dir + 1)
+                            {
+                                add_string(&dir_history, clean_path, false);
+                                current_dir++;
+                            }
+                            else
+                            {
+                                erase(&dir_history, current_dir + 1);
+                                add_string(&dir_history, clean_path, false);
+                                current_dir++;
+                            }
+                        }
+                        else
+                        {
+                            free(clean_path);
                         }
 
                         break;
@@ -370,8 +398,6 @@ void cd(s_vector* args)
                 }
             }
 
-            free(clean_path);
-
             break;
         }
         default:
@@ -386,9 +412,9 @@ void parse_input(s_vector* args, char* input_buffer)
     char* token = NULL;
     while ((token = strsep(&input_buffer, " \n\t")))
     {
-        add_string(args, token);
+        add_string(args, token, true);
     }
-    add_string(args, NULL);
+    add_string(args, NULL, true);
 }
 
 // Takes parsed commands and decides what to do with them
@@ -400,18 +426,12 @@ void handle_command_args(s_vector* args)
         return;
     }
 
-    if (!strcmp("exit", args->data[0]))
-    {
-        exit(0);
-    }
-    else if (!strcmp("cd", args->data[0]))
-    {
-        cd(args);
-    }
-    else
-    {
-        execute_bin(&args->data[0]);
-    }
+    if      (!strcmp("exit", args->data[0]))  { exit(0); }
+    else if (!strcmp("cd", args->data[0]))    { cd(args); }
+    else if (!strcmp("prevd", args->data[0])) { prevd(args); }
+    else if (!strcmp("nextd", args->data[0])) { nextd(args); }
+    else if (!strcmp("dirh", args->data[0]))  { dirh(args); }
+    else                                      { execute_bin(&args->data[0]); }
 
     free_s_vector(args);
 }
@@ -419,7 +439,7 @@ void handle_command_args(s_vector* args)
 void print_prompt()
 {
     // TODO: Read from config for prompt
-    printf("rash:%s> ", current_working_directory);
+    printf("rash:%s> ", dir_history.data[current_dir]);
 }
 
 void read_line(char** buffer, size_t* size, ssize_t* nread)
@@ -454,6 +474,8 @@ void run()
         parse_input(&args, buffer);
         handle_command_args(&args);
     }
+
+    clean_up_mem();
 }
 
 void init(int argc, char* argv[])
@@ -473,11 +495,89 @@ void init(int argc, char* argv[])
     add_path(&paths, "/usr/local/bin/");
     add_path(&paths, "/home/neogizmo/gizmo/programming_projects/razz/build");
 
-    update_cwd();
+    add_string(&dir_history, get_current_dir_name(), false);
+}
 
-    // Add cwd to directory history
-    int len = strlen(current_working_directory);
-    char* cwd = strndup(current_working_directory, len);
-    add_string(&dir_history, cwd);
-    free(cwd);
+// moves backward through the directory history
+void prevd(s_vector* args)
+{
+    if (num_args(args->data) > 1)
+    {
+        printf("prevd: too many arguments\n");
+        return;
+    }
+
+    if (current_dir == 0)
+    {
+        printf("prevd: already at earliest directory\n");
+        return;
+    }
+
+    if (chdir(dir_history.data[--current_dir]) == -1)
+    {
+        perror("chdir");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// moves forward through the directory history
+void nextd(s_vector* args)
+{
+    if (num_args(args->data) > 1)
+    {
+        printf("prevd: too many arguments\n");
+        return;
+    }
+
+    if (current_dir == dir_history.size - 1)
+    {
+        printf("prevd: already at current directory\n");
+        return;
+    }
+
+    if (chdir(dir_history.data[++current_dir]) == -1)
+    {
+        perror("chdir");
+        exit(EXIT_FAILURE);
+    }
+}
+
+int count_digits(int n)
+{
+    int count = 0;
+    if (n == 0)
+    {
+        return 1;
+    }
+    if (n < 0)
+    {
+        n = -n;
+    }
+    while (n != 0)
+    {
+        n /= 10;
+        count++;
+    }
+    return count;
+}
+
+// prints directory history
+void dirh(s_vector* args)
+{
+    if (num_args(args->data) > 1)
+    {
+        printf("prevd: too many arguments\n");
+        return;
+    }
+
+    int max_digits = MAX(count_digits((int)dir_history.size - (int)current_dir), count_digits((int)current_dir));
+    for (size_t i = 0; i < dir_history.size; i++)
+    {
+        int dist = abs((int)i - (int)current_dir);
+
+        if (dist)
+            printf("%*d) %s\n", max_digits, dist, dir_history.data[i]);
+        else
+            printf("%*c  %s\n", max_digits, ' ', dir_history.data[i]);
+    }
 }
