@@ -29,96 +29,32 @@ void update_cwd();
 
 void cd(s_vector* args);
 
+void parse_input(s_vector* args, char* input_buffer);
+void handle_command_args(s_vector* args);
+void print_prompt();
+void read_line(char** buffer, size_t* size, ssize_t* nread);
+void init(int argc, char* argv[]);
+void run();
+
 
 s_vector paths = {NULL, 0, 0};
 s_vector lines = {NULL, 0, 0};
+s_vector dir_history = {NULL, 0, 0};
+size_t current_dir = 0;
 
 char current_working_directory[PATH_MAX];
 
+
 int main(int argc, char* argv[])
 {
-    if (argc == 2)
-    {
-        printf("Not implemented yet!\n");
-        return 0;
-    }
-    else if (argc > 2)
-    {
-        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
-        exit(EXIT_FAILURE);
-    }
+    init(argc, argv);
+    run();
 
-    add_path(&paths, "/bin/");
-    add_path(&paths, "/usr/bin/");
-    add_path(&paths, "/usr/local/bin/");
-    add_path(&paths, "/home/neogizmo/gizmo/programming_projects/razz/build");
-
-    for (int i = 0; i < paths.size; i++)
-    {
-        printf("%s\n", paths.data[i]);
-    }
-
-    update_cwd();
-
-    char* buffer = NULL;
-    size_t size = 0;
-    ssize_t nread = 0;
-
-
-    while (true)
-    {
-        printf("rash:%s> ", current_working_directory);
-
-        if ((nread = getline(&buffer, &size, stdin)) != -1)
-        {
-            if (*buffer != '\n')
-            {
-                buf_add_string(&lines, buffer, nread);
-            }
-
-            s_vector args = {NULL, 0, 0};
-
-            // Parse input
-            char* buffer_cpy = buffer;
-            char* token = NULL;
-            while ((token = strsep(&buffer_cpy, " \n\t")))
-            {
-                add_string(&args, token);
-            }
-            add_string(&args, NULL);
-
-            if (num_args(args.data) == 0)
-            {
-                free_s_vector(&args);
-                continue;
-            }
-
-            if (!strcmp("exit", args.data[0]))
-            {
-                exit(0);
-            }
-            else if (!strcmp("cd", args.data[0]))
-            {
-                cd(&args);
-            }
-            else
-            {
-                execute_bin(&args.data[0]);
-            }
-
-            free_s_vector(&args);
-        }
-        else
-        {
-            printf("\n");
-            free(buffer);
-            exit(0);
-        }
-    }
-
-    return 0;
+    return EXIT_SUCCESS;
 }
 
+// Add string to dynamic array of strings
+// Capacity doubles when full and attempting to add string
 void add_string(s_vector* lines, char* buffer)
 {
     if (buffer && !*buffer) { return; }
@@ -140,6 +76,7 @@ void add_string(s_vector* lines, char* buffer)
     lines->size++;
 }
 
+// add_string but works on input buffer of variable length where actual string size might not match
 void buf_add_string(s_vector* lines, char* buffer, ssize_t nread)
 {
     if (buffer && !*buffer) { return; }
@@ -178,7 +115,7 @@ void add_path(s_vector* paths, char* path_name)
                 // check if the new path is already in the path
 
                 bool already_has_path = false;
-                for (int i = 0; i < paths->size; i++)
+                for (size_t i = 0; i < paths->size; i++)
                 {
                     if (!strcmp(abs_path, paths->data[i]))
                     {
@@ -260,15 +197,17 @@ int file_status(char* path_name)
     }
 }
 
+// free's memory of s_vector
 void free_s_vector(s_vector* vector)
 {
-    for (int i = 0; i < vector->size; i++)
+    for (size_t i = 0; i < vector->size; i++)
     {
         free(vector->data[i]);
     }
     free(vector->data);
 }
 
+// Runs an executable given args. If original command contains slashes, it's assumed to be relative or absolute path executable. Otherwise, the command is assumed to be some executable found in PATH
 void execute_bin(char** args)
 {
     bool contains_slashes = strchr(args[0], '/');
@@ -311,7 +250,7 @@ void execute_bin(char** args)
     }
     else
     {
-        for (int i = 0; i < paths.size; i++)
+        for (size_t i = 0; i < paths.size; i++)
         {
             if (asprintf(&path, "%s/%s", paths.data[i], args[0]) == -1)
             {
@@ -353,6 +292,7 @@ void execute_bin(char** args)
                     exit(EXIT_FAILURE);
                 }
             }
+            break;
         default:
             wait(NULL);
     }
@@ -369,6 +309,8 @@ void update_cwd()
     }
 }
 
+// change directory built-in. If only 1 argument (i.e 'cd'), go to home
+// If 2 arguments, change directory of process to relative or absolute path specified by 2nd arg
 void cd(s_vector* args)
 {
     int num_cd_args = num_args(args->data);
@@ -377,6 +319,7 @@ void cd(s_vector* args)
     {
         case 1:
             // cd to home
+            // TODO: NOT WORKING
             chdir(realpath("~", NULL));
             break;
         case 2:
@@ -399,6 +342,14 @@ void cd(s_vector* args)
                         }
 
                         update_cwd();
+
+                        // Add dir path to dir_history
+                        // TODO:
+                        if (dir_history.data[current_dir] && !strcmp(dir_history.data[current_dir], clean_path))
+                        {
+                            add_string(&dir_history, clean_path);
+                            current_dir++;
+                        }
 
                         break;
                     case 2:
@@ -427,4 +378,106 @@ void cd(s_vector* args)
             printf("cd: too many arguments\n");
             break;
     }
+}
+
+// Parses input into constituent commands
+void parse_input(s_vector* args, char* input_buffer)
+{
+    char* token = NULL;
+    while ((token = strsep(&input_buffer, " \n\t")))
+    {
+        add_string(args, token);
+    }
+    add_string(args, NULL);
+}
+
+// Takes parsed commands and decides what to do with them
+void handle_command_args(s_vector* args)
+{
+    if (num_args(args->data) == 0)
+    {
+        free_s_vector(args);
+        return;
+    }
+
+    if (!strcmp("exit", args->data[0]))
+    {
+        exit(0);
+    }
+    else if (!strcmp("cd", args->data[0]))
+    {
+        cd(args);
+    }
+    else
+    {
+        execute_bin(&args->data[0]);
+    }
+
+    free_s_vector(args);
+}
+
+void print_prompt()
+{
+    // TODO: Read from config for prompt
+    printf("rash:%s> ", current_working_directory);
+}
+
+void read_line(char** buffer, size_t* size, ssize_t* nread)
+{
+    if ((*nread = getline(buffer, size, stdin)) != -1)
+    {
+        // If read line isn't just a newline, add it to the lines s_vector
+        if (**buffer != '\n')
+        {
+            buf_add_string(&lines, *buffer, *nread);
+        }
+    }
+    else
+    {
+        perror("getline");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void run()
+{
+    char* buffer = NULL;
+    size_t size = 0;
+    ssize_t nread = 0;
+
+    while (true)
+    {
+        s_vector args = {NULL, 0, 0};
+
+        print_prompt();
+        read_line(&buffer, &size, &nread);
+        parse_input(&args, buffer);
+        handle_command_args(&args);
+    }
+}
+
+void init(int argc, char* argv[])
+{
+    if (argc == 2)
+    {
+        printf("Not implemented yet!\n");
+        exit(EXIT_SUCCESS);
+    }
+    else if (argc > 2)
+    {
+        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    add_path(&paths, "/bin/");
+    add_path(&paths, "/usr/local/bin/");
+    add_path(&paths, "/home/neogizmo/gizmo/programming_projects/razz/build");
+
+    update_cwd();
+
+    // Add cwd to directory history
+    int len = strlen(current_working_directory);
+    char* cwd = strndup(current_working_directory, len);
+    add_string(&dir_history, cwd);
+    free(cwd);
 }
