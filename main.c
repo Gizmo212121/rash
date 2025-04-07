@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/param.h>
+#include <fcntl.h>
 
 typedef struct s_vector
 {
@@ -20,23 +21,34 @@ typedef struct s_vector
     size_t capacity;
 } s_vector;
 
+typedef struct command
+{
+    size_t args_start;
+    size_t args_end;
+    char* stdin_redir;
+    char* stdout_redir;
+    char* stderr_redir;
+    bool bg; // Foreground or background cmd
+    struct command* pipe; // Piped command
+
+} command;
+
 void add_string(s_vector* lines, char* buffer, bool copy);
 void buf_add_string(s_vector* lines, char* buffer, ssize_t nread);
 void erase(s_vector* vec, int pos);
 void add_path(s_vector*, char* path_name);
 void free_s_vector(s_vector* vector);
-void execute_bin(char** args);
-int num_args(char** args);
+void execute_bin(const command* command, s_vector* tokens);
+int num_args(const command* command);
 int file_status(char* path_name);
 int count_digits(int n);
 
-void cd(s_vector* args);
-void prevd(s_vector* args);
-void nextd(s_vector* args);
-void dirh(s_vector* args);
+void cd(const command* command, s_vector* tokens);
+void prevd(const command* command);
+void nextd(const command* command);
+void dirh(const command* command);
 
-void parse_input(s_vector* args, char* input_buffer);
-void handle_command_args(s_vector* args);
+void handle_command(const command* command, s_vector* args);
 void print_prompt();
 void read_line(char** buffer, size_t* size, ssize_t* nread);
 void init(int argc, char* argv[]);
@@ -55,6 +67,22 @@ void clean_up_mem()
     free_s_vector(&dir_history);
 }
 
+void print_command(const command* command, const s_vector* tokens)
+{
+    printf("\nCommand:\n\targs_start: %lu\n\targs_end: %lu\n", command->args_start, command->args_end);
+
+    for (size_t j = command->args_start; j <= command->args_end; j++)
+    {
+        printf("\targ %lu: %s\n", j, tokens->data[j]);
+    }
+
+    if (command->stdin_redir) { printf("\n\tfn: %s\n", command->stdin_redir); }
+    if (command->stdout_redir) { printf("\n\tfn: %s\n", command->stdout_redir); }
+    if (command->stderr_redir) { printf("\n\tfn: %s\n", command->stderr_redir); }
+
+    printf("\n");
+}
+
 
 int main(int argc, char* argv[])
 {
@@ -69,7 +97,7 @@ int main(int argc, char* argv[])
 // If copy is true, the original buffer is copied. If copy is false, the pointer is copied
 void add_string(s_vector* lines, char* buffer, bool copy)
 {
-    if (buffer && !*buffer) { return; }
+    // if (buffer && !*buffer) { return; } // TODO: Could be bad
 
     if (lines->size == lines->capacity)
     {
@@ -77,7 +105,6 @@ void add_string(s_vector* lines, char* buffer, bool copy)
         char** temp = realloc(lines->data, sizeof(*lines->data) * lines->capacity);
         if (!temp)
         {
-            // TODO: Free on exit?
             perror("realloc");
             exit(EXIT_FAILURE);
         }
@@ -176,16 +203,9 @@ void add_path(s_vector* paths, char* path_name)
 // Determine number of arguments by finding null argument
 // Initial command is the 1'st argument, so 'cd' has 1 arguments, 'cd ..' has 2 argument, and args with just the null argument is 0 arguments
 // Args should always be at least size 1
-int num_args(char** args)
+int num_args(const command* command)
 {
-    int i = 0;
-    while (true)
-    {
-        if (!args[i]) { break; }
-        i++;
-    }
-
-    return i;
+    return command->args_end - command->args_start + 1;
 }
 
 // Takes an absolute path to a file and determines if it's a directory, a file, nonexistent, or invalid
@@ -235,23 +255,23 @@ void free_s_vector(s_vector* vector)
 }
 
 // Runs an executable given args. If original command contains slashes, it's assumed to be relative or absolute path executable. Otherwise, the command is assumed to be some executable found in PATH
-void execute_bin(char** args)
+void execute_bin(const command* command, s_vector* tokens)
 {
-    bool contains_slashes = strchr(args[0], '/');
+    bool contains_slashes = strchr(tokens->data[command->args_start], '/');
     char* path = NULL;
 
     if (contains_slashes)
     {
-        path = realpath(args[0], NULL);
+        path = realpath(tokens->data[command->args_start], NULL);
         if (!path)
         {
             if (errno == ENOENT)
             {
-                printf("%s: no such file or directory\n", args[0]);
+                printf("%s: no such file or directory\n", tokens->data[command->args_start]);
             }
             else
             {
-                fprintf(stderr, "%s: ", args[0]);
+                fprintf(stderr, "%s: ", tokens->data[command->args_start]);
                 perror("realpath");
             }
 
@@ -263,13 +283,13 @@ void execute_bin(char** args)
         if (fs == 1)
         {
             free(path);
-            printf("%s: is a directory\n", args[0]);
+            printf("%s: is a directory\n", tokens->data[command->args_start]);
             return;
         }
 
         if (access(path, X_OK))
         {
-            fprintf(stderr, "%s: ", args[0]);
+            fprintf(stderr, "%s: ", tokens->data[command->args_start]);
             perror("access");
             free(path);
             return;
@@ -279,7 +299,7 @@ void execute_bin(char** args)
     {
         for (size_t i = 0; i < paths.size; i++)
         {
-            if (asprintf(&path, "%s/%s", paths.data[i], args[0]) == -1)
+            if (asprintf(&path, "%s/%s", paths.data[i], tokens->data[command->args_start]) == -1)
             {
                 perror("asprintf");
                 exit(EXIT_FAILURE);
@@ -296,7 +316,7 @@ void execute_bin(char** args)
 
         if (!path)
         {
-            printf("%s: command not found\n", args[0]);
+            printf("%s: command not found\n", tokens->data[command->args_start]);
             return;
         }
 
@@ -313,11 +333,26 @@ void execute_bin(char** args)
             exit(EXIT_FAILURE);
         case 0:
             {
-                if (execv(path, args) == -1)
+                // Change file descriptor if needed
+                if (command->stdin_redir)
+                {
+                    if (!freopen(command->stdin_redir, "r", stdin))
+                    {
+                        perror("freopen");
+                        exit(EXIT_FAILURE);
+                    }
+                }
+
+                // Execute the command
+                char* tmp = tokens->data[command->args_end + 1];
+                tokens->data[command->args_end + 1] = NULL;
+
+                if (execv(path, tokens->data + command->args_start) == -1)
                 {
                     perror("execv");
                     exit(EXIT_FAILURE);
                 }
+                tokens->data[command->args_end] = tmp;
             }
             break;
         default:
@@ -329,9 +364,9 @@ void execute_bin(char** args)
 
 // change directory built-in. If only 1 argument (i.e 'cd'), go to home
 // If 2 arguments, change directory of process to relative or absolute path specified by 2nd arg
-void cd(s_vector* args)
+void cd(const command* command, s_vector* tokens)
 {
-    int num_cd_args = num_args(args->data);
+    int num_cd_args = num_args(command);
 
     switch (num_cd_args)
     {
@@ -342,15 +377,17 @@ void cd(s_vector* args)
             break;
         case 2:
         {
-            char* clean_path = realpath(args->data[1], NULL);
+            char* clean_path = realpath(tokens->data[command->args_end], NULL);
             if (clean_path)
             {
+                printf("clean_path: %s\n", clean_path);
+
                 int fs = file_status(clean_path);
                 switch (fs)
                 {
                     case 0:
                         // Does this ever happen?
-                        printf("cd: %s: invalid path\n", args->data[1]);
+                        printf("cd: %s: invalid path\n", tokens->data[command->args_end]);
                         break;
                     case 1:
                         if (chdir(clean_path) == -1)
@@ -362,17 +399,14 @@ void cd(s_vector* args)
                         // Add dir path to dir_history
                         if (strcmp(dir_history.data[current_dir], clean_path))
                         {
-                            if (dir_history.size == current_dir + 1)
-                            {
-                                add_string(&dir_history, clean_path, false);
-                                current_dir++;
-                            }
-                            else
+                            // Overwrite dir history past at current dir if not on the current dir
+                            if (dir_history.size != current_dir + 1)
                             {
                                 erase(&dir_history, current_dir + 1);
-                                add_string(&dir_history, clean_path, false);
-                                current_dir++;
                             }
+
+                            add_string(&dir_history, clean_path, false);
+                            current_dir++;
                         }
                         else
                         {
@@ -381,7 +415,7 @@ void cd(s_vector* args)
 
                         break;
                     case 2:
-                        printf("cd: %s: not a directory\n", args->data[1]);
+                        printf("cd: %s: not a directory\n", tokens->data[command->args_end]);
                         break;
                 }
             }
@@ -389,7 +423,7 @@ void cd(s_vector* args)
             {
                 if (errno == ENOENT)
                 {
-                    printf("cd: %s: invalid path\n", args->data[1]);
+                    printf("cd: %s: invalid path\n", tokens->data[command->args_end]);
                 }
                 else
                 {
@@ -406,40 +440,33 @@ void cd(s_vector* args)
     }
 }
 
-// Parses input into constituent commands
-void parse_input(s_vector* args, char* input_buffer)
+// Takes parsed command and decides what to do with it
+void handle_command(const command* command, s_vector* tokens)
 {
-    char* token = NULL;
-    while ((token = strsep(&input_buffer, " \n\t")))
+    if (num_args(command) != 0)
     {
-        add_string(args, token, true);
-    }
-    add_string(args, NULL, true);
-}
+        char* first_arg = tokens->data[command->args_start];
 
-// Takes parsed commands and decides what to do with them
-void handle_command_args(s_vector* args)
-{
-    if (num_args(args->data) == 0)
-    {
-        free_s_vector(args);
-        return;
+        if      (!strcmp("exit"  , first_arg)) { exit(0); }
+        else if (!strcmp("cd"    , first_arg)) { cd(command, tokens); }
+        else if (!strcmp("prevd" , first_arg)) { prevd(command); }
+        else if (!strcmp("nextd" , first_arg)) { nextd(command); }
+        else if (!strcmp("dirh"  , first_arg)) { dirh(command); }
+        else                                   { execute_bin(command, tokens); }
     }
 
-    if      (!strcmp("exit", args->data[0]))  { exit(0); }
-    else if (!strcmp("cd", args->data[0]))    { cd(args); }
-    else if (!strcmp("prevd", args->data[0])) { prevd(args); }
-    else if (!strcmp("nextd", args->data[0])) { nextd(args); }
-    else if (!strcmp("dirh", args->data[0]))  { dirh(args); }
-    else                                      { execute_bin(&args->data[0]); }
-
-    free_s_vector(args);
+    printf("idiot\n");
 }
 
 void print_prompt()
 {
     // TODO: Read from config for prompt
-    printf("rash:%s> ", dir_history.data[current_dir]);
+
+    printf("\033[1;32m");
+    printf("rash:");
+    printf("\033[1;34m");
+    printf("%s> ", dir_history.data[current_dir]);
+    printf("\033[0m");
 }
 
 void read_line(char** buffer, size_t* size, ssize_t* nread)
@@ -459,6 +486,231 @@ void read_line(char** buffer, size_t* size, ssize_t* nread)
     }
 }
 
+typedef enum DELIM
+{
+    ALPHANUMERIC,
+    WHITESPACE,
+    PIPE,
+    OUT_REDIR,
+    IN_REDIR,
+    SEMI_COLON,
+    AMPERSAND,
+    QUOTE,
+    DOUBLE_QUOTE,
+} DELIM;
+
+static const char* const delim_strings[] =
+{
+    "ALPHANUMERIC",
+    "WHITESPACE",
+    "PIPE",
+    "OUT_REDIR",
+    "IN_REDIR",
+    "SEMI_COLON",
+    "AMPERSAND",
+    "QUOTE",
+    "DOUBLE_QUOTE",
+};
+
+
+DELIM delimiter(char c)
+{
+    if (c == ' ' || c == '\t' || c == '\n') { return WHITESPACE; }
+    else if (c == '|')  { return PIPE; }
+    else if (c == '>')  { return OUT_REDIR; }
+    else if (c == '<')  { return IN_REDIR; }
+    else if (c == ';')  { return SEMI_COLON; }
+    else if (c == '&')  { return AMPERSAND; }
+    else if (c == '\'') { return QUOTE; }
+    else if (c == '"')  { return DOUBLE_QUOTE; }
+    else { return ALPHANUMERIC; }
+}
+
+bool tokenize(s_vector* tokens, char* buffer, ssize_t nread)
+{
+    if (nread == 1) { return false; }
+
+    // Split input into discrete tokens in O(n) pass
+    ssize_t token_start = 0;
+    char replace = '\0';
+    DELIM previous_delim = WHITESPACE;
+    DELIM current_delim = WHITESPACE;
+    bool need_closing_delim = false;
+
+    for (int i = 0; i < nread; i++)
+    {
+        current_delim = delimiter(buffer[i]);
+
+        if (current_delim == QUOTE || current_delim == DOUBLE_QUOTE)
+        {
+            if (!need_closing_delim)
+            {
+                previous_delim = current_delim;
+                need_closing_delim = true;
+                token_start = (ssize_t)i + 1;
+            }
+            else if (previous_delim == current_delim)
+            {
+                // Replace current position with null terminating
+                buffer[i] = '\0';
+
+                // Copy token to tokens
+                if (i != token_start)
+                    add_string(tokens, strndup(buffer + token_start, i - token_start), false);
+                else // Empty string
+                    add_string(tokens, "", true);
+
+                // Add back original character
+                buffer[i] = ' ';
+
+                token_start = (ssize_t)i + 1;
+                previous_delim = WHITESPACE;
+
+                need_closing_delim = false;
+            }
+        }
+        else if (!need_closing_delim)
+        {
+            if (current_delim != previous_delim)
+            {
+                if (previous_delim != WHITESPACE)
+                {
+                    // Replace current position with null terminating
+                    replace = buffer[i];
+                    buffer[i] = '\0';
+
+                    // Copy token to tokens
+                    char* token = strndup(buffer + token_start, i - token_start);
+                    add_string(tokens, token, false);
+
+                    // Add back original character
+                    buffer[i] = replace;
+
+                }
+
+                token_start = (ssize_t)i;
+                previous_delim = current_delim;
+            }
+            else
+            {
+                if (current_delim == WHITESPACE)
+                {
+                    token_start++;
+                }
+            }
+        }
+    }
+
+    if (need_closing_delim)
+    {
+        fprintf(stderr, "missing closing delimiter: %s\n", delim_strings[previous_delim]);
+        free_s_vector(tokens);
+        return false;
+    }
+
+    if (!tokens->size) { return false; }
+    else
+    {
+        printf("Tokens size: %lu\nTokens cap: %lu\n", tokens->size, tokens->capacity);
+
+        for (size_t i = 0; i < tokens->size; i++)
+        {
+            if (tokens->data[i])
+                printf("%lu: %s\n", i, tokens->data[i]);
+        }
+
+        return true;
+    }
+}
+
+bool parse_tokens(s_vector* tokens)
+{
+    // Use calloc so struct members are 0-initialized
+    command* commands = calloc(tokens->size, sizeof(*commands));
+
+    bool done_taking_args = false;
+    size_t current_command = 0;
+    size_t arg_start = 0;
+
+    for (size_t i = 0; i < tokens->size; i++)
+    {
+        int redir = 0;
+
+        if ((!strcmp("<", tokens->data[i]) && (redir = 0))  ||
+            (!strcmp(">", tokens->data[i]) && (redir = 1)) ||
+            (!strcmp("2>", tokens->data[i]) && (redir = 2)))
+        {
+            if (i == 0)
+            {
+                fprintf(stderr, "syntax error near symbol %s: unexpected redirection\n", tokens->data[i]);
+                goto syntax_error;
+            }
+            else
+            {
+                if (i + 1 < tokens->size)
+                {
+                    done_taking_args = true;
+
+                    switch (redir)
+                    {
+                        case 0:
+                            (commands + current_command)->stdin_redir = tokens->data[i++ + 1];
+                            break;
+                        case 1:
+                            (commands + current_command)->stdout_redir = tokens->data[i++ + 1];
+                            break;
+                        case 2:
+                            (commands + current_command)->stderr_redir = tokens->data[i++ + 1];
+                            break;
+                    }
+                }
+                else
+                {
+                    fprintf(stderr, "syntax error near %s: redirection missing file\n", tokens->data[i]);
+                    goto syntax_error;
+                }
+            }
+        }
+        else if (!strcmp(";", tokens->data[i]))
+        {
+            done_taking_args = false;
+            current_command++;
+            arg_start = i + 1;
+        }
+        else
+        {
+            if (!done_taking_args)
+            {
+                (commands + current_command)->args_start = arg_start;
+                (commands + current_command)->args_end = i;
+            }
+            else
+            {
+                fprintf(stderr, "%s: unexpected argument\n", tokens->data[i]);
+                goto syntax_error;
+            }
+        }
+    }
+
+    add_string(tokens, NULL, false);
+
+    for (size_t i = 0; i <= current_command; i++)
+    {
+        print_command(&commands[i], tokens);
+        handle_command(&commands[i], tokens);
+    }
+
+    free_s_vector(tokens);
+    free(commands);
+
+    return true;
+
+    syntax_error:
+        free_s_vector(tokens);
+        free(commands);
+        return false;
+}
+
 void run()
 {
     char* buffer = NULL;
@@ -467,12 +719,12 @@ void run()
 
     while (true)
     {
-        s_vector args = {NULL, 0, 0};
+        s_vector tokens = {0};
 
         print_prompt();
         read_line(&buffer, &size, &nread);
-        parse_input(&args, buffer);
-        handle_command_args(&args);
+        if (!tokenize(&tokens, buffer, nread)) { continue; }
+        if (!parse_tokens(&tokens)) { continue; }
     }
 
     clean_up_mem();
@@ -499,9 +751,9 @@ void init(int argc, char* argv[])
 }
 
 // moves backward through the directory history
-void prevd(s_vector* args)
+void prevd(const command* command)
 {
-    if (num_args(args->data) > 1)
+    if (num_args(command) > 1)
     {
         printf("prevd: too many arguments\n");
         return;
@@ -521,9 +773,9 @@ void prevd(s_vector* args)
 }
 
 // moves forward through the directory history
-void nextd(s_vector* args)
+void nextd(const command* command)
 {
-    if (num_args(args->data) > 1)
+    if (num_args(command) > 1)
     {
         printf("prevd: too many arguments\n");
         return;
@@ -562,9 +814,9 @@ int count_digits(int n)
 }
 
 // prints directory history
-void dirh(s_vector* args)
+void dirh(const command* command)
 {
-    if (num_args(args->data) > 1)
+    if (num_args(command) > 1)
     {
         printf("prevd: too many arguments\n");
         return;
@@ -578,6 +830,10 @@ void dirh(s_vector* args)
         if (dist)
             printf("%*d) %s\n", max_digits, dist, dir_history.data[i]);
         else
+        {
+            printf("\033[1m"); // Bold for current dir
             printf("%*c  %s\n", max_digits, ' ', dir_history.data[i]);
+            printf("\033[0m"); // Revert from bold
+        }
     }
 }

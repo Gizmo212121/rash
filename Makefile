@@ -1,5 +1,5 @@
-rash: main2.c
-	gcc -g -Wall -Wextra -pedantic -Werror main2.c -o rash
+rash: main.c
+	gcc -g -Wall -Wextra -pedantic -Werror main.c -o rash
 clean:
 	rm rash
 run:
