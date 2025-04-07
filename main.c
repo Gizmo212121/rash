@@ -47,6 +47,7 @@ void cd(const command* command, s_vector* tokens);
 void prevd(const command* command);
 void nextd(const command* command);
 void dirh(const command* command);
+void path(const command* command, s_vector* tokens);
 
 void handle_command(const command* command, s_vector* args);
 void print_prompt();
@@ -166,6 +167,7 @@ void add_path(s_vector* paths, char* path_name)
         {
             case 0:
                 printf("%s: invalid path\n", abs_path);
+                free(abs_path);
                 break;
             case 1: // Valid path and dir
                 // check if the new path is already in the path
@@ -187,10 +189,12 @@ void add_path(s_vector* paths, char* path_name)
                 else
                 {
                     printf("%s: already in path\n", abs_path);
+                    free(abs_path);
                 }
                 break;
             case 2: // Valid path but not dir
                 printf("%s: not a directory\n", abs_path);
+                free(abs_path);
                 break;
         }
     }
@@ -452,10 +456,9 @@ void handle_command(const command* command, s_vector* tokens)
         else if (!strcmp("prevd" , first_arg)) { prevd(command); }
         else if (!strcmp("nextd" , first_arg)) { nextd(command); }
         else if (!strcmp("dirh"  , first_arg)) { dirh(command); }
+        else if (!strcmp("path"  , first_arg)) { path(command, tokens); }
         else                                   { execute_bin(command, tokens); }
     }
-
-    printf("idiot\n");
 }
 
 void print_prompt()
@@ -818,7 +821,7 @@ void dirh(const command* command)
 {
     if (num_args(command) > 1)
     {
-        printf("prevd: too many arguments\n");
+        fprintf(stderr, "prevd: too many arguments\n");
         return;
     }
 
@@ -834,6 +837,27 @@ void dirh(const command* command)
             printf("\033[1m"); // Bold for current dir
             printf("%*c  %s\n", max_digits, ' ', dir_history.data[i]);
             printf("\033[0m"); // Revert from bold
+        }
+    }
+}
+
+void path(const command* command, s_vector* tokens)
+{
+    int numargs = num_args(command);
+
+    if (numargs == 1)
+    {
+        printf("paths:\n");
+        for (size_t i = 0; i < paths.size; i++)
+        {
+            printf("\t%s\n", paths.data[i]);
+        }
+    }
+    else
+    {
+        for (int i = 0; i < numargs - 1; i++)
+        {
+            add_path(&paths, tokens->data[command->args_start + 1 + i]);
         }
     }
 }
