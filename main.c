@@ -27,8 +27,8 @@ typedef struct command
     char* stdin_redir;
     char* stdout_redir;
     char* stderr_redir;
-    bool bg; // Foreground or background cmd
     struct command* pipe; // Piped command
+    bool bg; // Foreground or background cmd
 
 } command;
 
@@ -346,6 +346,15 @@ void execute_bin(const command* command, s_vector* tokens)
                     }
                 }
 
+                if (command->stdout_redir)
+                {
+                    if (!freopen(command->stdout_redir, "w", stdout))
+                    {
+                        perror("freopen");
+                        exit(EXIT_FAILURE);
+                    }
+                }
+
                 // Execute the command
                 char* tmp = tokens->data[command->args_end + 1];
                 tokens->data[command->args_end + 1] = NULL;
@@ -614,7 +623,7 @@ bool tokenize(s_vector* tokens, char* buffer, ssize_t nread)
     else
     {
         // printf("Tokens size: %lu\nTokens cap: %lu\n", tokens->size, tokens->capacity);
-
+        //
         // for (size_t i = 0; i < tokens->size; i++)
         // {
         //     if (tokens->data[i])
@@ -638,10 +647,12 @@ bool parse_tokens(s_vector* tokens)
     {
         int redir = 0;
 
-        if ((!strcmp("<", tokens->data[i]) && (redir = 0))  ||
+        if ((!strcmp("<", tokens->data[i]) )||
             (!strcmp(">", tokens->data[i]) && (redir = 1)) ||
             (!strcmp("2>", tokens->data[i]) && (redir = 2)))
         {
+
+            printf("strcmp found redir: %s", tokens->data[i]);
             if (i == 0)
             {
                 fprintf(stderr, "syntax error near symbol %s: unexpected redirection\n", tokens->data[i]);
