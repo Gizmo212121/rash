@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,7 +6,7 @@
 #include <sys/wait.h>
 #include <dirent.h>
 #include <errno.h>
-#include <linux/limits.h>
+#include <limits.h>
 #include <libgen.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -384,7 +383,7 @@ void cd(const command* command, s_vector* tokens)
             char* clean_path = realpath(tokens->data[command->args_end], NULL);
             if (clean_path)
             {
-                printf("clean_path: %s\n", clean_path);
+                // printf("clean_path: %s\n", clean_path);
 
                 int fs = file_status(clean_path);
                 switch (fs)
@@ -614,13 +613,13 @@ bool tokenize(s_vector* tokens, char* buffer, ssize_t nread)
     if (!tokens->size) { return false; }
     else
     {
-        printf("Tokens size: %lu\nTokens cap: %lu\n", tokens->size, tokens->capacity);
+        // printf("Tokens size: %lu\nTokens cap: %lu\n", tokens->size, tokens->capacity);
 
-        for (size_t i = 0; i < tokens->size; i++)
-        {
-            if (tokens->data[i])
-                printf("%lu: %s\n", i, tokens->data[i]);
-        }
+        // for (size_t i = 0; i < tokens->size; i++)
+        // {
+        //     if (tokens->data[i])
+        //         printf("%lu: %s\n", i, tokens->data[i]);
+        // }
 
         return true;
     }
@@ -699,7 +698,7 @@ bool parse_tokens(s_vector* tokens)
 
     for (size_t i = 0; i <= current_command; i++)
     {
-        print_command(&commands[i], tokens);
+        // print_command(&commands[i], tokens);
         handle_command(&commands[i], tokens);
     }
 
@@ -748,9 +747,10 @@ void init(int argc, char* argv[])
 
     add_path(&paths, "/bin/");
     add_path(&paths, "/usr/local/bin/");
-    add_path(&paths, "/home/neogizmo/gizmo/programming_projects/razz/build");
 
-    add_string(&dir_history, get_current_dir_name(), false);
+    char cwd[PATH_MAX];
+    getcwd(cwd, PATH_MAX);
+    add_string(&dir_history, cwd, false);
 }
 
 // moves backward through the directory history

@@ -3,4 +3,6 @@ rash: main.c
 clean:
 	rm rash
 run:
+	./rash
+run-debug:
 	valgrind --leak-check=full --track-origins=yes ./rash
