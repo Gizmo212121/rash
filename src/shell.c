@@ -1,64 +1,14 @@
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <sys/wait.h>
-#include <dirent.h>
-#include <errno.h>
-#include <limits.h>
-#include <libgen.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/param.h>
-#include <fcntl.h>
+#include "../include/shell.h"
 
-typedef struct s_vector
-{
-    char** data;
-    size_t size;
-    size_t capacity;
-} s_vector;
-
-typedef struct command
-{
-    size_t args_start;
-    size_t args_end;
-    char* stdin_redir;
-    char* stdout_redir;
-    char* stderr_redir;
-    struct command* pipe; // Piped command
-    bool bg; // Foreground or background cmd
-
-} command;
-
-void add_string(s_vector* lines, char* buffer, bool copy);
-void buf_add_string(s_vector* lines, char* buffer, ssize_t nread);
-void erase(s_vector* vec, int pos);
-void add_path(s_vector*, char* path_name);
-void free_s_vector(s_vector* vector);
-void execute_bin(const command* command, s_vector* tokens);
-int num_args(const command* command);
-int file_status(char* path_name);
-int count_digits(int n);
-
-void cd(const command* command, s_vector* tokens);
-void prevd(const command* command);
-void nextd(const command* command);
-void dirh(const command* command);
-void path(const command* command, s_vector* tokens);
-
-void handle_command(const command* command, s_vector* args);
-void print_prompt();
-void read_line(char** buffer, size_t* size, ssize_t* nread);
-void init(int argc, char* argv[]);
-void run();
-
-
+line interactive_line = {0};
 s_vector paths = {NULL, 0, 0};
 s_vector lines = {NULL, 0, 0};
 s_vector dir_history = {NULL, 0, 0};
 size_t current_dir = 0;
+
+size_t prompt_start_y = 0;
+size_t prompt_end_y = 0;
+size_t prompt_length = 0;
 
 void clean_up_mem()
 {
@@ -81,77 +31,6 @@ void print_command(const command* command, const s_vector* tokens)
     if (command->stderr_redir) { printf("\n\tfn: %s\n", command->stderr_redir); }
 
     printf("\n");
-}
-
-
-int main(int argc, char* argv[])
-{
-    init(argc, argv);
-    run();
-
-    return EXIT_SUCCESS;
-}
-
-// Add string to dynamic array of strings
-// Capacity doubles when full and attempting to add string
-// If copy is true, the original buffer is copied. If copy is false, the pointer is copied
-void add_string(s_vector* lines, char* buffer, bool copy)
-{
-    // if (buffer && !*buffer) { return; } // TODO: Could be bad
-
-    if (lines->size == lines->capacity)
-    {
-        lines->capacity = (lines->capacity == 0) ? 1 : lines->capacity << 1;
-        char** temp = realloc(lines->data, sizeof(*lines->data) * lines->capacity);
-        if (!temp)
-        {
-            perror("realloc");
-            exit(EXIT_FAILURE);
-        }
-        lines->data = temp;
-    }
-
-    if (copy)
-        lines->data[lines->size] = buffer ? strdup(buffer) : NULL;
-    else
-        lines->data[lines->size] = buffer;
-
-    lines->size++;
-}
-
-// add_string but works on input buffer of variable length where actual string size might not match
-void buf_add_string(s_vector* lines, char* buffer, ssize_t nread)
-{
-    if (buffer && !*buffer) { return; }
-
-    if (lines->size == lines->capacity)
-    {
-        lines->capacity = (lines->capacity == 0) ? 1 : lines->capacity << 1;
-        char** temp = realloc(lines->data, sizeof(*lines->data) * lines->capacity);
-        if (!temp)
-        {
-            // TODO: Free on exit?
-            perror("realloc");
-            exit(EXIT_FAILURE);
-        }
-        lines->data = temp;
-    }
-
-    lines->data[lines->size] = buffer ? strndup(buffer, nread) : NULL;
-    lines->size++;
-}
-
-void erase(s_vector* vec, int pos)
-{
-    if (pos < 0 || pos >= (int)vec->size) { fprintf(stderr, "erase: invalid range\n"); exit(EXIT_FAILURE); }
-
-    for (int i = pos; i < (int)vec->size; i++)
-    {
-        free(vec->data[i]);
-        vec->data[i] = NULL;
-    }
-
-    vec->size = pos;
 }
 
 // Adds path path_name to PATH. Cleans path_name for absolute syntax, resolving symlinks, checking if the path_name is valid, and checking if the path_name already exists in PATH.
@@ -247,16 +126,6 @@ int file_status(char* path_name)
     }
 }
 
-// free's memory of s_vector
-void free_s_vector(s_vector* vector)
-{
-    for (size_t i = 0; i < vector->size; i++)
-    {
-        free(vector->data[i]);
-    }
-    free(vector->data);
-}
-
 // Runs an executable given args. If original command contains slashes, it's assumed to be relative or absolute path executable. Otherwise, the command is assumed to be some executable found in PATH
 void execute_bin(const command* command, s_vector* tokens)
 {
@@ -308,7 +177,6 @@ void execute_bin(const command* command, s_vector* tokens)
                 exit(EXIT_FAILURE);
             }
 
-            if (!access(path, X_OK))
             {
                 break;
             }
@@ -471,13 +339,31 @@ void handle_command(const command* command, s_vector* tokens)
 
 void print_prompt()
 {
-    // TODO: Read from config for prompt
-
     printf("\033[1;32m");
     printf("rash:");
     printf("\033[1;34m");
     printf("%s> ", dir_history.data[current_dir]);
     printf("\033[0m");
+}
+
+void refresh_prompt(bool flush)
+{
+    cursor_pos pos = get_cursor();
+    prompt_start_y = pos.y;
+
+    print_prompt();
+
+    if (flush)
+        fflush(stdout);
+
+    pos = get_cursor();
+    prompt_end_y = pos.y;
+
+
+    // TODO: eventually move away from hardcoding the username length through using env to retrieve it
+    prompt_length = 7 + strlen(dir_history.data[current_dir]) + 1;
+
+    prompt_end_y = prompt_start_y + (prompt_length / win_size_x()); 
 }
 
 void read_line(char** buffer, size_t* size, ssize_t* nread)
@@ -526,7 +412,7 @@ static const char* const delim_strings[] =
 
 DELIM delimiter(char c)
 {
-    if (c == ' ' || c == '\t' || c == '\n') { return WHITESPACE; }
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\0') { return WHITESPACE; }
     else if (c == '|')  { return PIPE; }
     else if (c == '>')  { return OUT_REDIR; }
     else if (c == '<')  { return IN_REDIR; }
@@ -632,6 +518,7 @@ bool tokenize(s_vector* tokens, char* buffer, ssize_t nread)
 
         return true;
     }
+    printf("tokenized\n");
 }
 
 bool parse_tokens(s_vector* tokens)
@@ -724,20 +611,188 @@ bool parse_tokens(s_vector* tokens)
         return false;
 }
 
+bool is_alpha_numeric_symbolic(char c)
+{
+    return (c >= 32 && c <= 126);
+}
+
+
+typedef enum
+{
+    UNASSIGNED_KEY,
+    ALPHA_NUMERIC_SYMBOLIC,
+    ENTER,
+    BACKSPACE,
+    CTRL_BACKSPACE,
+    LEFT_ARROW,
+    RIGHT_ARROW,
+    DOWN_ARROW,
+    UP_ARROW,
+    CTRL_RIGHT_ARROW,
+    CTRL_UP_ARROW,
+    CTRL_DOWN_ARROW,
+    CTRL_LEFT_ARROW,
+    C_L,
+
+} KEY;
+
+void refresh_interactive_line()
+{
+    int interactive_line_start_y = prompt_end_y;
+    if (interactive_line_start_y > win_size_y())
+    {
+        interactive_line_start_y = win_size_y();
+        prompt_start_y--;
+        prompt_end_y--;
+    }
+    int interactive_line_start_x = prompt_length % (win_size_x());
+
+    move_cursor(interactive_line_start_y, interactive_line_start_x);
+
+    // erase from cursor to end of screen
+    printf("\033[J");
+
+    printf("%.*s", (int)interactive_line.size, interactive_line.data);
+
+    int raw_cursor_displacement_x = interactive_line_start_x + (int)interactive_line.cursor_pos;
+    int final_cursor_x = (raw_cursor_displacement_x - 1) % (win_size_x()) + 1;
+    int final_cursor_y = interactive_line_start_y + ((raw_cursor_displacement_x - 1) / win_size_x());
+
+
+    if (
+            interactive_line_start_y + (((int)interactive_line.size + interactive_line_start_x - 1) / win_size_x()) == win_size_y() + 1
+        )
+    {
+        printf("\n");
+        // final_cursor_y = win_size_y();
+        final_cursor_y--;
+        prompt_start_y--;
+        prompt_end_y--;
+    }
+    move_cursor(final_cursor_y, final_cursor_x);
+
+    fflush(stdout);
+}
+
+
+void print_key_info(char* buf, int read_bytes)
+{
+    printf("\nRead bytes: %d\n", read_bytes);
+    printf("Numerical representation: ");
+    for (int i = 0; i < 8; i++)
+    {
+        printf("%d ", (int)buf[i]);
+    }
+    printf("\nChar representation: ");
+
+    for (int i = 0; i < read_bytes; i++)
+    {
+        printf("%c ", buf[i]);
+    }
+    printf("\n");
+}
+
+KEY get_input(char* buf)
+{
+    int read_bytes = read(STDIN_FILENO, buf, 16);
+    if (read_bytes == -1)
+    {
+        perror("Read error");
+        exit(EXIT_FAILURE);
+    }
+
+    // print_key_info(buf, read_bytes);
+
+    if (!strcmp(buf,      "\033[A")) return UP_ARROW;
+    else if (!strcmp(buf, "\033[B")) return DOWN_ARROW;
+    else if (!strcmp(buf, "\033[C")) return RIGHT_ARROW;
+    else if (!strcmp(buf, "\033[D")) return LEFT_ARROW;
+    else if (!strcmp(buf, "\033[1;5A")) return CTRL_UP_ARROW;
+    else if (!strcmp(buf, "\033[1;5B")) return CTRL_DOWN_ARROW;
+    else if (!strcmp(buf, "\033[1;5C")) return CTRL_RIGHT_ARROW;
+    else if (!strcmp(buf, "\033[1;5D")) return CTRL_LEFT_ARROW;
+    else if (!strcmp(buf, "\177") || !strcmp(buf, "\010")) return BACKSPACE;
+    else if (!strcmp(buf, "\012")) return ENTER;
+    else if (!strcmp(buf, "\014")) return C_L;
+    else if (read_bytes == 1 && is_alpha_numeric_symbolic(buf[0])) { return ALPHA_NUMERIC_SYMBOLIC; }
+    else { return UNASSIGNED_KEY; }
+}
+
+void send_line()
+{
+    s_vector tokens = {0};
+
+    putc('\n', stdout);
+
+    // turn back on echo so child process shows input correctly
+    set_term_echo_and_canonical(true);
+
+    if (tokenize(&tokens, interactive_line.data, interactive_line.size + 1))
+    {
+        parse_tokens(&tokens);
+    }
+
+    set_term_echo_and_canonical(false);
+
+    clear_line(&interactive_line);
+    refresh_prompt(true);
+}
+
+void clear_screen()
+{
+    move_cursor(1, 1);
+    print_prompt();
+    prompt_start_y = 1;
+    prompt_end_y = prompt_start_y + (prompt_length / win_size_x()); 
+    printf("\033[J");
+}
+
+void handle_input()
+{
+    char input[16] = {0};
+    KEY key_type = get_input(input);
+
+    switch (key_type)
+    {
+        case ENTER:
+            send_line(); break;
+        case C_L:
+            clear_screen(); break;
+        case ALPHA_NUMERIC_SYMBOLIC:
+            insert_character(&interactive_line, input[0]); break;
+        case LEFT_ARROW:
+            move_line_cursor_x(&interactive_line, -1); break;
+        case RIGHT_ARROW:
+            move_line_cursor_x(&interactive_line, 1); break;
+        case DOWN_ARROW:
+            break;
+        case UP_ARROW:
+            break;
+        case CTRL_LEFT_ARROW:
+            break;
+        case CTRL_RIGHT_ARROW:
+            break;
+        case CTRL_UP_ARROW:
+            break;
+        case CTRL_DOWN_ARROW:
+            break;
+        case BACKSPACE:
+            remove_character(&interactive_line); break;
+        case CTRL_BACKSPACE:
+            break;
+        case UNASSIGNED_KEY:
+            break;
+    }
+
+    refresh_interactive_line();
+}
+
 void run()
 {
-    char* buffer = NULL;
-    size_t size = 0;
-    ssize_t nread = 0;
-
+    refresh_prompt(true);
     while (true)
     {
-        s_vector tokens = {0};
-
-        print_prompt();
-        read_line(&buffer, &size, &nread);
-        if (!tokenize(&tokens, buffer, nread)) { continue; }
-        if (!parse_tokens(&tokens)) { continue; }
+        handle_input();
     }
 
     clean_up_mem();
@@ -756,12 +811,16 @@ void init(int argc, char* argv[])
         exit(EXIT_FAILURE);
     }
 
+    initscr();
+
+    initialize_line(&interactive_line);
+
     add_path(&paths, "/bin/");
     add_path(&paths, "/usr/local/bin/");
 
     char cwd[PATH_MAX];
     getcwd(cwd, PATH_MAX);
-    add_string(&dir_history, cwd, false);
+    add_string(&dir_history, cwd, true);
 }
 
 // moves backward through the directory history
