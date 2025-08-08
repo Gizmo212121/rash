@@ -617,25 +617,6 @@ bool is_alpha_numeric_symbolic(char c)
 }
 
 
-typedef enum
-{
-    UNASSIGNED_KEY,
-    ALPHA_NUMERIC_SYMBOLIC,
-    ENTER,
-    BACKSPACE,
-    CTRL_BACKSPACE,
-    LEFT_ARROW,
-    RIGHT_ARROW,
-    DOWN_ARROW,
-    UP_ARROW,
-    CTRL_RIGHT_ARROW,
-    CTRL_UP_ARROW,
-    CTRL_DOWN_ARROW,
-    CTRL_LEFT_ARROW,
-    C_L,
-
-} KEY;
-
 void refresh_interactive_line()
 {
     int interactive_line_start_y = prompt_end_y;
@@ -692,32 +673,6 @@ void print_key_info(char* buf, int read_bytes)
     printf("\n");
 }
 
-KEY get_input(char* buf)
-{
-    int read_bytes = read(STDIN_FILENO, buf, 16);
-    if (read_bytes == -1)
-    {
-        perror("Read error");
-        exit(EXIT_FAILURE);
-    }
-
-    // print_key_info(buf, read_bytes);
-
-    if (!strcmp(buf,      "\033[A")) return UP_ARROW;
-    else if (!strcmp(buf, "\033[B")) return DOWN_ARROW;
-    else if (!strcmp(buf, "\033[C")) return RIGHT_ARROW;
-    else if (!strcmp(buf, "\033[D")) return LEFT_ARROW;
-    else if (!strcmp(buf, "\033[1;5A")) return CTRL_UP_ARROW;
-    else if (!strcmp(buf, "\033[1;5B")) return CTRL_DOWN_ARROW;
-    else if (!strcmp(buf, "\033[1;5C")) return CTRL_RIGHT_ARROW;
-    else if (!strcmp(buf, "\033[1;5D")) return CTRL_LEFT_ARROW;
-    else if (!strcmp(buf, "\177") || !strcmp(buf, "\010")) return BACKSPACE;
-    else if (!strcmp(buf, "\012")) return ENTER;
-    else if (!strcmp(buf, "\014")) return C_L;
-    else if (read_bytes == 1 && is_alpha_numeric_symbolic(buf[0])) { return ALPHA_NUMERIC_SYMBOLIC; }
-    else { return UNASSIGNED_KEY; }
-}
-
 void send_line()
 {
     s_vector tokens = {0};
@@ -747,6 +702,53 @@ void clear_screen()
     printf("\033[J");
 }
 
+typedef enum
+{
+    UNASSIGNED_KEY,
+    ALPHA_NUMERIC_SYMBOLIC,
+    ENTER,
+    BACKSPACE,
+    CTRL_BACKSPACE,
+    LEFT_ARROW,
+    RIGHT_ARROW,
+    DOWN_ARROW,
+    UP_ARROW,
+    CTRL_RIGHT_ARROW,
+    CTRL_UP_ARROW,
+    CTRL_DOWN_ARROW,
+    CTRL_LEFT_ARROW,
+    C_L,
+    C_W,
+
+} KEY;
+
+KEY get_input(char* buf)
+{
+    int read_bytes = read(STDIN_FILENO, buf, 16);
+    if (read_bytes == -1)
+    {
+        perror("Read error");
+        exit(EXIT_FAILURE);
+    }
+
+    // print_key_info(buf, read_bytes);
+
+    if (!strcmp(buf,      "\033[A")) return UP_ARROW;
+    else if (!strcmp(buf, "\033[B")) return DOWN_ARROW;
+    else if (!strcmp(buf, "\033[C")) return RIGHT_ARROW;
+    else if (!strcmp(buf, "\033[D")) return LEFT_ARROW;
+    else if (!strcmp(buf, "\033[1;5A")) return CTRL_UP_ARROW;
+    else if (!strcmp(buf, "\033[1;5B")) return CTRL_DOWN_ARROW;
+    else if (!strcmp(buf, "\033[1;5C")) return CTRL_RIGHT_ARROW;
+    else if (!strcmp(buf, "\033[1;5D")) return CTRL_LEFT_ARROW;
+    else if (!strcmp(buf, "\177") || !strcmp(buf, "\010")) return BACKSPACE;
+    else if (!strcmp(buf, "\012")) return ENTER;
+    else if (!strcmp(buf, "\014")) return C_L;
+    else if (!strcmp(buf, "\027")) return C_W;
+    else if (read_bytes == 1 && is_alpha_numeric_symbolic(buf[0])) { return ALPHA_NUMERIC_SYMBOLIC; }
+    else { return UNASSIGNED_KEY; }
+}
+
 void handle_input()
 {
     char input[16] = {0};
@@ -758,6 +760,8 @@ void handle_input()
             send_line(); break;
         case C_L:
             clear_screen(); break;
+        case C_W:
+            delete_word_backwards(&interactive_line); break;
         case ALPHA_NUMERIC_SYMBOLIC:
             insert_character(&interactive_line, input[0]); break;
         case LEFT_ARROW:
@@ -928,6 +932,27 @@ void path(const command* command, s_vector* tokens)
         for (int i = 0; i < numargs - 1; i++)
         {
             add_path(&paths, tokens->data[command->args_start + 1 + i]);
+        }
+    }
+}
+
+void delete_word_backwards(line* l)
+{
+    bool found_non_whitespace = false;
+    bool found_whitespace_after_non_white_space = false;
+
+    char current_character = '\0';
+    while(l->cursor_pos > 0)
+    {
+        current_character = l->data[l->cursor_pos - 1];
+
+        if (current_character != ' ') { found_non_whitespace = true; }
+        else if (found_non_whitespace) { found_whitespace_after_non_white_space = true; }
+
+        remove_character(&interactive_line);
+        if (found_non_whitespace && found_whitespace_after_non_white_space)
+        {
+            break;
         }
     }
 }

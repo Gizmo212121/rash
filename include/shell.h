@@ -49,6 +49,8 @@ void nextd(const command* command);
 void dirh(const command* command);
 void path(const command* command, s_vector* tokens);
 
+void delete_word_backwards(line* l);
+
 void clear_screen();
 
 void handle_command(const command* command, s_vector* args);
