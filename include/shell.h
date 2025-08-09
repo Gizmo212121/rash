@@ -42,6 +42,7 @@ void execute_bin(const command* command, s_vector* tokens);
 int num_args(const command* command);
 int file_status(char* path_name);
 int count_digits(int n);
+ssize_t find_index_of_next_string_match(s_vector* haystack, ssize_t current_index, char* needle, bool search_backwards);
 
 void cd(const command* command, s_vector* tokens);
 void prevd(const command* command);
@@ -49,9 +50,11 @@ void nextd(const command* command);
 void dirh(const command* command);
 void path(const command* command, s_vector* tokens);
 
-void delete_word_backwards(line* l);
-
 void clear_screen();
+void delete_word_backwards(line* l);
+void remove_character_forward(line* l);
+void backward_history_search();
+void forward_history_search();
 
 void handle_command(const command* command, s_vector* args);
 void print_prompt();
@@ -62,7 +65,12 @@ void run();
 
 extern line interactive_line;
 extern s_vector paths;
-extern s_vector lines;
+
+extern s_vector line_history;
+extern line temp_line;
+extern ssize_t line_history_search_index;
+extern bool search_initiated;
+
 extern s_vector dir_history;
 extern size_t current_dir;
 

@@ -25,6 +25,23 @@ void initialize_line(line* l)
     l->cursor_pos = 0;
 }
 
+void initialize_line_with_new_data(line* l, char* d)
+{
+    char* copy = strdup(d);
+    if (!copy)
+    {
+        perror("Line history strdup\n");
+        exit(EXIT_FAILURE);
+    }
+
+    l->data = copy;
+
+    int line_size = strlen(l->data);
+    l->size = line_size;
+    l->cursor_pos = line_size;
+    l->capacity = line_size + 1;
+}
+
 // Doubles a line's capacity and reallocs the data
 void increase_line_capacity(line * l)
 {
@@ -90,7 +107,7 @@ bool remove_character(line* l)
 
     if (l->size == l->cursor_pos)
     {
-        *(l->data + l->size + 1) = '\0';
+        *(l->data + l->size - 1) = '\0';
     }
     else
     {
@@ -109,6 +126,13 @@ void clear_line(line* l)
 
     l->size = 0;
     l->cursor_pos = 0;
+}
+
+void clear_line_and_free(line* l)
+{
+    clear_line(l);
+    free(l->data);
+    l->data = NULL;
 }
 
 void move_line_cursor_x(line* l, int x)

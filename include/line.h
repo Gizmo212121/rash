@@ -19,11 +19,15 @@ typedef struct line
 } line;
 
 void initialize_line(line* l);
+// warning: assumes previous l->data was handled properly by
+// either clearing+free or moving l->data somewhere else
+void initialize_line_with_new_data(line* l, char* d);
 void increase_line_capacity(line * l);
 void insert_character(line* l, char c);
 void push_back_character(line* l, char c);
 bool remove_character(line* l);
 void clear_line(line* l);
+void clear_line_and_free(line* l);
 void move_line_cursor_x(line* l, int x);
 
 #endif

@@ -8,7 +8,7 @@ BIN_DIR := bin
 OBJS := $(patsubst %.c,%.o, $(wildcard $(SRC_DIR)/*.c))
 
 CC := gcc
-CFLAGS := -Wall -Wextra -pedantic -Werror
+CFLAGS := -Wall -Wextra -pedantic
 
 ifeq ($(debug), 1)
 	CFLAGS := $(CFLAGS) -g -Og

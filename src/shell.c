@@ -1,10 +1,16 @@
 #include "../include/shell.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 line interactive_line = {0};
 s_vector paths = {NULL, 0, 0};
-s_vector lines = {NULL, 0, 0};
 s_vector dir_history = {NULL, 0, 0};
 size_t current_dir = 0;
+
+s_vector line_history = {NULL, 0, 0};
+ssize_t line_history_search_index = 0;
+line temp_line = {0};
+bool search_initiated = false;
 
 size_t prompt_start_y = 0;
 size_t prompt_end_y = 0;
@@ -13,7 +19,7 @@ size_t prompt_length = 0;
 void clean_up_mem()
 {
     free_s_vector(&paths);
-    free_s_vector(&lines);
+    free_s_vector(&line_history);
     free_s_vector(&dir_history);
 }
 
@@ -370,10 +376,10 @@ void read_line(char** buffer, size_t* size, ssize_t* nread)
 {
     if ((*nread = getline(buffer, size, stdin)) != -1)
     {
-        // If read line isn't just a newline, add it to the lines s_vector
+        // If read line isn't just a newline, add it to the line_history s_vector
         if (**buffer != '\n')
         {
-            buf_add_string(&lines, *buffer, *nread);
+            buf_add_string(&line_history, *buffer, *nread);
         }
     }
     else
@@ -682,12 +688,17 @@ void send_line()
     // turn back on echo so child process shows input correctly
     set_term_echo_and_canonical(true);
 
+    bool success = false;
     if (tokenize(&tokens, interactive_line.data, interactive_line.size + 1))
     {
-        parse_tokens(&tokens);
+        if (parse_tokens(&tokens))
+            success = true;
     }
 
     set_term_echo_and_canonical(false);
+
+    if (success && ( line_history.size == 0 || strcmp(interactive_line.data, line_history.data[line_history.size - 1]) ))
+        add_string(&line_history, interactive_line.data, true);
 
     clear_line(&interactive_line);
     refresh_prompt(true);
@@ -704,21 +715,56 @@ void clear_screen()
 
 typedef enum
 {
-    UNASSIGNED_KEY,
-    ALPHA_NUMERIC_SYMBOLIC,
-    ENTER,
-    BACKSPACE,
-    CTRL_BACKSPACE,
-    LEFT_ARROW,
-    RIGHT_ARROW,
-    DOWN_ARROW,
-    UP_ARROW,
-    CTRL_RIGHT_ARROW,
-    CTRL_UP_ARROW,
-    CTRL_DOWN_ARROW,
-    CTRL_LEFT_ARROW,
-    C_L,
-    C_W,
+    KEY_UNASSIGNED,
+    KEY_ALPHA_NUM_SYMBOL,
+    KEY_ENTER,
+
+    KEY_BACKSPACE,
+    KEY_C_BACKSPACE,
+    KEY_DELETE,
+
+    KEY_LEFT,
+    KEY_RIGHT,
+    KEY_DOWN,
+    KEY_UP,
+
+    KEY_C_LEFT,
+    KEY_C_RIGHT,
+    KEY_C_UP,
+    KEY_C_DOWN,
+
+    KEY_C_AT,
+    KEY_C_A,
+    KEY_C_B,
+    KEY_C_C,
+    KEY_C_D,
+    KEY_C_E,
+    KEY_C_F,
+    KEY_C_G,
+    KEY_C_H,
+    KEY_C_I,
+    KEY_C_J,
+    KEY_C_K,
+    KEY_C_L,
+    KEY_C_M,
+    KEY_C_N,
+    KEY_C_O,
+    KEY_C_P,
+    KEY_C_Q,
+    KEY_C_R,
+    KEY_C_S,
+    KEY_C_T,
+    KEY_C_U,
+    KEY_C_V,
+    KEY_C_W,
+    KEY_C_X,
+    KEY_C_Y,
+    KEY_C_Z,
+    KEY_C_LBRACKET,
+    KEY_C_BACKSLASH,
+    KEY_C_RBRACKET,
+    KEY_C_CARET,
+    KEY_C_UNDERSCORE,
 
 } KEY;
 
@@ -733,21 +779,53 @@ KEY get_input(char* buf)
 
     // print_key_info(buf, read_bytes);
 
-    if (!strcmp(buf,      "\033[A")) return UP_ARROW;
-    else if (!strcmp(buf, "\033[B")) return DOWN_ARROW;
-    else if (!strcmp(buf, "\033[C")) return RIGHT_ARROW;
-    else if (!strcmp(buf, "\033[D")) return LEFT_ARROW;
-    else if (!strcmp(buf, "\033[1;5A")) return CTRL_UP_ARROW;
-    else if (!strcmp(buf, "\033[1;5B")) return CTRL_DOWN_ARROW;
-    else if (!strcmp(buf, "\033[1;5C")) return CTRL_RIGHT_ARROW;
-    else if (!strcmp(buf, "\033[1;5D")) return CTRL_LEFT_ARROW;
-    else if (!strcmp(buf, "\177") || !strcmp(buf, "\010")) return BACKSPACE;
-    else if (!strcmp(buf, "\012")) return ENTER;
-    else if (!strcmp(buf, "\014")) return C_L;
-    else if (!strcmp(buf, "\027")) return C_W;
-    else if (read_bytes == 1 && is_alpha_numeric_symbolic(buf[0])) { return ALPHA_NUMERIC_SYMBOLIC; }
-    else { return UNASSIGNED_KEY; }
+    if (read_bytes == 1 && is_alpha_numeric_symbolic(buf[0])) { return KEY_ALPHA_NUM_SYMBOL; }
+    else if (buf[0] == '\000') return KEY_C_AT;
+    else if (buf[0] == '\001') return KEY_C_A;
+    else if (buf[0] == '\002') return KEY_C_B;
+    else if (buf[0] == '\003') return KEY_C_C;
+    else if (buf[0] == '\004') return KEY_C_D;
+    else if (buf[0] == '\005') return KEY_C_E;
+    else if (buf[0] == '\006') return KEY_C_F;
+    else if (buf[0] == '\007') return KEY_C_G;
+    else if (buf[0] == '\010') return KEY_BACKSPACE; // C-H
+    else if (buf[0] == '\177') return KEY_BACKSPACE;
+    else if (buf[0] == '\011') return KEY_C_I;
+    else if (buf[0] == '\012') return KEY_ENTER; // C-J
+    else if (buf[0] == '\013') return KEY_C_K;
+    else if (buf[0] == '\014') return KEY_C_L;
+    else if (buf[0] == '\015') return KEY_C_M;
+    else if (buf[0] == '\016') return KEY_C_N;
+    else if (buf[0] == '\017') return KEY_C_O;
+    else if (buf[0] == '\020') return KEY_C_P;
+    else if (buf[0] == '\021') return KEY_C_Q;
+    else if (buf[0] == '\022') return KEY_C_R;
+    else if (buf[0] == '\023') return KEY_C_S;
+    else if (buf[0] == '\024') return KEY_C_T;
+    else if (buf[0] == '\025') return KEY_C_U;
+    else if (buf[0] == '\026') return KEY_C_V;
+    else if (buf[0] == '\027') return KEY_C_W;
+    else if (buf[0] == '\030') return KEY_C_X;
+    else if (buf[0] == '\031') return KEY_C_Y;
+    else if (buf[0] == '\032') return KEY_C_Z;
+    else if (buf[0] == '\034') return KEY_C_BACKSLASH;
+    else if (buf[0] == '\035') return KEY_C_RBRACKET;
+    else if (buf[0] == '\036') return KEY_C_CARET;
+    else if (buf[0] == '\037') return KEY_C_UNDERSCORE;
+    else if (buf[0] == 127) return KEY_DELETE;
+    else if (!strcmp(buf, "\033[A"))    return KEY_UP;
+    else if (!strcmp(buf, "\033[B"))    return KEY_DOWN;
+    else if (!strcmp(buf, "\033[C"))    return KEY_RIGHT;
+    else if (!strcmp(buf, "\033[D"))    return KEY_LEFT;
+    else if (!strcmp(buf, "\033[1;5A")) return KEY_C_UP;
+    else if (!strcmp(buf, "\033[1;5B")) return KEY_C_DOWN;
+    else if (!strcmp(buf, "\033[1;5C")) return KEY_C_RIGHT;
+    else if (!strcmp(buf, "\033[1;5D")) return KEY_C_LEFT;
+    else if (!strcmp(buf, "\033[3~"))   return KEY_DELETE;
+    else { return KEY_UNASSIGNED; }
 }
+
+KEY previous_key = KEY_UNASSIGNED;
 
 void handle_input()
 {
@@ -756,39 +834,46 @@ void handle_input()
 
     switch (key_type)
     {
-        case ENTER:
+        case KEY_ENTER:
             send_line(); break;
-        case C_L:
+        case KEY_C_L:
             clear_screen(); break;
-        case C_W:
+        case KEY_C_P:
+            backward_history_search(); break;
+        case KEY_C_W:
             delete_word_backwards(&interactive_line); break;
-        case ALPHA_NUMERIC_SYMBOLIC:
+        case KEY_ALPHA_NUM_SYMBOL:
             insert_character(&interactive_line, input[0]); break;
-        case LEFT_ARROW:
+        case KEY_LEFT:
             move_line_cursor_x(&interactive_line, -1); break;
-        case RIGHT_ARROW:
+        case KEY_RIGHT:
             move_line_cursor_x(&interactive_line, 1); break;
-        case DOWN_ARROW:
+        case KEY_DOWN:
+            forward_history_search(); break;
+        case KEY_UP:
+            backward_history_search(); break;
+        case KEY_C_LEFT:
             break;
-        case UP_ARROW:
+        case KEY_C_RIGHT:
             break;
-        case CTRL_LEFT_ARROW:
+        case KEY_C_UP:
             break;
-        case CTRL_RIGHT_ARROW:
+        case KEY_C_DOWN:
             break;
-        case CTRL_UP_ARROW:
-            break;
-        case CTRL_DOWN_ARROW:
-            break;
-        case BACKSPACE:
+        case KEY_BACKSPACE:
             remove_character(&interactive_line); break;
-        case CTRL_BACKSPACE:
-            break;
-        case UNASSIGNED_KEY:
+        case KEY_DELETE:
+            remove_character_forward(&interactive_line); break;
+        case KEY_C_BACKSPACE:
+            delete_word_backwards(&interactive_line); break;
+        case KEY_UNASSIGNED:
             break;
     }
 
-    refresh_interactive_line();
+    if (key_type != KEY_UNASSIGNED)
+    {
+        previous_key = key_type;
+    }
 }
 
 void run()
@@ -797,6 +882,7 @@ void run()
     while (true)
     {
         handle_input();
+        refresh_interactive_line();
     }
 
     clean_up_mem();
@@ -955,4 +1041,95 @@ void delete_word_backwards(line* l)
             break;
         }
     }
+}
+
+void remove_character_forward(line* l)
+{
+    if (l->cursor_pos == l->size) { return; }
+
+    move_line_cursor_x(l, 1);
+    remove_character(l);
+}
+
+void backward_history_search()
+{
+    if (line_history.size == 0) { return; }
+    bool previously_searched = (previous_key == KEY_UP || previous_key == KEY_C_P || previous_key == KEY_DOWN || previous_key == KEY_C_N);
+    if (!previously_searched)
+    {
+        line_history_search_index = (ssize_t)line_history.size - 1;
+        clear_line_and_free(&temp_line);
+    }
+    if (line_history_search_index == -1) { return; }
+
+    // case 1: interactive line has no data
+    //      don't set temp line, just go back in history by one
+    // case 2: interactive line has data and temp line does not, and this is the first history search (initiate search)
+    // cash 3: interactive line has data and temp line does not, but search was never initiated -> just go back in history by one
+    // case 4: interactive line has data and so does temp (search pattern), search was initiated, follow through on search
+
+    if (interactive_line.size == 0 || (!temp_line.size && previously_searched))
+    {
+        clear_line_and_free(&interactive_line);
+        initialize_line_with_new_data(&interactive_line, line_history.data[line_history_search_index]);
+
+        line_history_search_index--;
+    }
+    else if (interactive_line.size)
+    {
+        char* data_to_search = (previously_searched) ? temp_line.data : interactive_line.data;
+        line_history_search_index = find_index_of_next_string_match(&line_history, line_history_search_index, data_to_search, true);
+        if (line_history_search_index == -1) { return; }
+
+        if (!previously_searched)
+            initialize_line_with_new_data(&temp_line, interactive_line.data);
+
+        clear_line_and_free(&interactive_line);
+        initialize_line_with_new_data(&interactive_line, line_history.data[line_history_search_index]);
+
+
+        line_history_search_index--;
+    }
+}
+
+void forward_history_search()
+{
+//     if (line_history.size == 0) { return; }
+//     bool previously_searched = (previous_key == KEY_UP || previous_key == KEY_C_P || previous_key == KEY_DOWN || previous_key == KEY_C_N);
+//     if (!previously_searched) { return; }
+//     if (line_history_search_index == line_history.size - 1) { return; }
+//
+//     if (temp_line.data == NULL)
+//     {
+//         // printf("oairenst\n");
+//         // clear_line_and_free(&interactive_line);
+//         // initialize_line_with_new_data(&interactive_line, line_history.data[line_history_search_index + 1]);
+//
+//         clear_line_and_free(&interactive_line);
+//         initialize_line_with_new_data(&interactive_line, line_history.data[++line_history_search_index]);
+//     }
+//
+//
+}
+
+ssize_t find_index_of_next_string_match(s_vector* haystack, ssize_t current_index, char* needle, bool search_backwards)
+{
+    assert(haystack && needle);
+    if (strlen(needle) == 0) { return -1; }
+
+    while (current_index >= 0 && current_index < haystack->size)
+    {
+
+        char* subset_index = strstr(haystack->data[current_index], needle);
+        if (subset_index != NULL && strlen(needle) < strlen(haystack->data[current_index]))
+            return current_index;
+
+        if (search_backwards) 
+            current_index--;
+
+        if (!search_backwards)
+            current_index++;
+    }
+
+    return -1;
 }
