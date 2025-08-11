@@ -1,6 +1,8 @@
 #ifndef SHELL_H
 #define SHELL_H
 
+#define UNUSED(x) (void)(x)
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +45,7 @@ int num_args(const command* command);
 int file_status(char* path_name);
 int count_digits(int n);
 ssize_t find_index_of_next_string_match(s_vector* haystack, ssize_t current_index, char* needle, bool search_backwards);
+void kill_child(int sig_num);
 
 void cd(const command* command, s_vector* tokens);
 void prevd(const command* command);
@@ -77,5 +80,7 @@ extern size_t current_dir;
 extern size_t prompt_start_y;
 extern size_t prompt_end_y;
 extern size_t prompt_length;
+
+extern pid_t active_child;
 
 #endif

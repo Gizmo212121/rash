@@ -8,13 +8,15 @@ s_vector dir_history = {NULL, 0, 0};
 size_t current_dir = 0;
 
 s_vector line_history = {NULL, 0, 0};
-ssize_t line_history_search_index = 0;
+ssize_t line_history_search_index = -1;
 line temp_line = {0};
 bool search_initiated = false;
 
 size_t prompt_start_y = 0;
 size_t prompt_end_y = 0;
 size_t prompt_length = 0;
+
+pid_t active_child = -1;
 
 void clean_up_mem()
 {
@@ -200,10 +202,10 @@ void execute_bin(const command* command, s_vector* tokens)
     }
 
     // Execute command
-    pid_t pid = fork();
+    active_child = fork();
     // Some error code for SIGCHLD supposed to be here?
 
-    switch(pid)
+    switch(active_child)
     {
         case -1:
             perror("fork");
@@ -243,6 +245,7 @@ void execute_bin(const command* command, s_vector* tokens)
             break;
         default:
             wait(NULL);
+            active_child = -1;
     }
 
     free(path);
@@ -888,6 +891,17 @@ void run()
     clean_up_mem();
 }
 
+void kill_child(int sig_num)
+{
+    UNUSED(sig_num);
+    if (active_child != -1)
+        kill(active_child, SIGINT);
+
+    set_term_echo_and_canonical(false);
+    putchar('\n');
+    // refresh_prompt(true);
+}
+
 void init(int argc, char* argv[])
 {
     if (argc == 2)
@@ -900,6 +914,8 @@ void init(int argc, char* argv[])
         fprintf(stderr, "Usage: %s <file>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
+
+    signal(SIGINT, kill_child);
 
     initscr();
 
@@ -1053,14 +1069,18 @@ void remove_character_forward(line* l)
 
 void backward_history_search()
 {
-    if (line_history.size == 0) { return; }
     bool previously_searched = (previous_key == KEY_UP || previous_key == KEY_C_P || previous_key == KEY_DOWN || previous_key == KEY_C_N);
     if (!previously_searched)
     {
         line_history_search_index = (ssize_t)line_history.size - 1;
         clear_line_and_free(&temp_line);
     }
-    if (line_history_search_index == -1) { return; }
+
+    if (line_history.size == 0 || line_history_search_index == -1)
+    {
+        previous_key = KEY_UNASSIGNED;
+        return; 
+    }
 
     // case 1: interactive line has no data
     //      don't set temp line, just go back in history by one
@@ -1079,7 +1099,11 @@ void backward_history_search()
     {
         char* data_to_search = (previously_searched) ? temp_line.data : interactive_line.data;
         line_history_search_index = find_index_of_next_string_match(&line_history, line_history_search_index, data_to_search, true);
-        if (line_history_search_index == -1) { return; }
+        if (line_history_search_index == -1)
+        {
+            previous_key = KEY_UNASSIGNED;
+            return; 
+        }
 
         if (!previously_searched)
             initialize_line_with_new_data(&temp_line, interactive_line.data);
@@ -1094,22 +1118,26 @@ void backward_history_search()
 
 void forward_history_search()
 {
-//     if (line_history.size == 0) { return; }
-//     bool previously_searched = (previous_key == KEY_UP || previous_key == KEY_C_P || previous_key == KEY_DOWN || previous_key == KEY_C_N);
-//     if (!previously_searched) { return; }
-//     if (line_history_search_index == line_history.size - 1) { return; }
-//
-//     if (temp_line.data == NULL)
-//     {
-//         // printf("oairenst\n");
-//         // clear_line_and_free(&interactive_line);
-//         // initialize_line_with_new_data(&interactive_line, line_history.data[line_history_search_index + 1]);
-//
-//         clear_line_and_free(&interactive_line);
-//         initialize_line_with_new_data(&interactive_line, line_history.data[++line_history_search_index]);
-//     }
-//
-//
+    bool previously_searched = (previous_key == KEY_UP || previous_key == KEY_C_P || previous_key == KEY_DOWN || previous_key == KEY_C_N);
+    if (line_history.size == 0 || (line_history_search_index == -1 && previous_key != KEY_UP && previous_key != KEY_C_P) || !previously_searched || line_history_search_index == (ssize_t)line_history.size - 1)
+    {
+        previous_key = KEY_UNASSIGNED;
+        return; 
+    }
+
+    // printf("what\n");
+
+    if (temp_line.data == NULL)
+    {
+        clear_line_and_free(&interactive_line);
+        line_history_search_index++;
+        if (line_history_search_index < (ssize_t)line_history.size - 1)
+        {
+            initialize_line_with_new_data(&interactive_line, line_history.data[line_history_search_index + 1]);
+        }
+    }
+
+
 }
 
 ssize_t find_index_of_next_string_match(s_vector* haystack, ssize_t current_index, char* needle, bool search_backwards)
